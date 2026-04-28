@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# brandgen outputs
+# Per-client outputs may contain proprietary client material.
+# By default we ignore them; remove this line if you want to track them.
+brand-guides/*/
+!brand-guides/.gitkeep
+
+# Playwright traces and screenshots from debugging
+playwright-trace/
+test-results/
