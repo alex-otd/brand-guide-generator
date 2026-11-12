@@ -1,56 +1,98 @@
 """
-WCAG 2.1 Contrast Ratio Computation Engine.
-Calculates the relative luminance and contrast ratio between foreground and background colors.
+Compute WCAG 2.0 AA and 2.1 contrast ratios for color pairings.
+
+Implementation follows the W3C relative luminance and contrast formulas.
 """
+from __future__ import annotations
 
-from brandgen.models.contract import ContrastResult
+from pydantic import BaseModel
 
 
-def calculate_relative_luminance(color_hex: str) -> float:
-    """
-    Computes the relative luminance of a color according to WCAG 2.1 standards.
-    Formula: L = 0.2126 * R + 0.7152 * G + 0.0722 * B
-    """
-    # Normalize hex to RGB values
-    hex_val = color_hex.lstrip('#')
-    rgb = tuple(int(hex_val[i:i+2], 16) / 255.0 for i in (0, 2, 4))
+class ContrastResult(BaseModel):
+    """Results of a WCAG contrast ratio calculation between two colors."""
+    foreground: str          # hex
+    background: str          # hex
+    ratio: float             # 1.0 to 21.0
+    aa_normal_text: bool     # ratio >= 4.5
+    aa_large_text: bool      # ratio >= 3.0
+    aaa_normal_text: bool    # ratio >= 7.0
+    aaa_large_text: bool     # ratio >= 4.5
+    ui_components: bool      # ratio >= 3.0 (WCAG 2.1)
+
+
+def relative_luminance(rgb: tuple[int, int, int]) -> float:
+    """Compute relative luminance using the WCAG formula."""
+    # Normalize each channel to by dividing by 255
+    srgb = [c / 255.0 for c in rgb]
     
-    components = []
-    for val in rgb:
-        if val <= 0.03928:
-            components.append(val / 12.92)
+    # Apply sRGB linearization: if channel <= 0.03928, divide by 12.92;
+    # otherwise ((c + 0.055) / 1.055) ** 2.4
+    output = []
+    for c in srgb:
+        if c <= 0.03928:
+            output.append(c / 12.92)
         else:
-            components.append(((val + 0.055) / 1.055) ** 2.4)
+            output.append(((c + 0.055) / 1.055) ** 2.4)
             
-    r, g, b = components
+    r, g, b = output
+    # Return 0.2126 * R + 0.7152 * G + 0.0722 * B
     return 0.2126 * r + 0.7152 * g + 0.0722 * b
 
 
-def compute_contrast(foreground: str, background: str) -> ContrastResult:
-    """
-    Computes the contrast ratio between two hex colors and returns a ContrastResult.
-    Formula: (L1 + 0.05) / (L2 + 0.05), where L1 is the lighter luminance.
-    """
-    lum1 = calculate_relative_luminance(foreground)
-    lum2 = calculate_relative_luminance(background)
+def contrast_ratio(fg: tuple[int, int, int], bg: tuple[int, int, int]) -> float:
+    """Compute the WCAG contrast ratio (L_lighter + 0.05) / (L_darker + 0.05)."""
+    l1 = relative_luminance(fg)
+    l2 = relative_luminance(bg)
     
-    lighter = max(lum1, lum2)
-    darker = min(lum1, lum2)
+    lighter = max(l1, l2)
+    darker = min(l1, l2)
     
-    ratio = (lighter + 0.05) / (darker + 0.05)
+    return (lighter + 0.05) / (darker + 0.05)
+
+
+def _parse_hex(hex_str: str) -> tuple[int, int, int]:
+    """Parse hex string to RGB tuple. Handles # prefix and 3-char shorthand."""
+    clean_hex = hex_str.lstrip("#").lower()
     
-    # Determine compliance levels
-    compliance = {
-        "AA_large": ratio >= 3.0,
-        "AA": ratio >= 4.5,
-        "AAA_large": ratio >= 4.5,
-        "AAA": ratio >= 7.0
-    }
-    
-    return ContrastResult(
-        ratio=round(ratio, 2),
-        foreground=foreground,
-        background=background,
-        compliance=compliance,
-        reasoning=f"Computed using WCAG 2.1 relative luminance formulas. Ratio: {round(ratio, 2)}:1"
+    # Invalid hex (non-hex characters): raise ValueError
+    if not all(c in "0123456789abcdef" for c in clean_hex):
+        raise ValueError(f"invalid hex characters: {hex_str}")
+
+    # Expand 3-char shorthand to 6-char
+    if len(clean_hex) == 3:
+        clean_hex = "".join(c * 2 for c in clean_hex)
+        
+    # Invalid length: raise ValueError
+    if len(clean_hex) != 6:
+        raise ValueError(f"invalid hex length: {hex_str}")
+        
+    return (
+        int(clean_hex[0:2], 16),
+        int(clean_hex[2:4], 16),
+        int(clean_hex[4:6], 16)
     )
+
+
+def compute_contrast_matrix(
+    colors: list[str], pairings: list[tuple[str, str]]
+) -> list[ContrastResult]:
+    """Compute contrast for every observed foreground/background pair."""
+    results = []
+    for fg_hex, bg_hex in pairings:
+        fg_rgb = _parse_hex(fg_hex)
+        bg_rgb = _parse_hex(bg_hex)
+        
+        ratio = contrast_ratio(fg_rgb, bg_rgb)
+        
+        # Populate ContrastResult flags per WCAG thresholds
+        results.append(ContrastResult(
+            foreground=fg_hex.lower() if fg_hex.startswith("#") else f"#{fg_hex.lower()}",
+            background=bg_hex.lower() if bg_hex.startswith("#") else f"#{bg_hex.lower()}",
+            ratio=round(ratio, 2),
+            aa_normal_text=ratio >= 4.5,
+            aa_large_text=ratio >= 3.0,
+            aaa_normal_text=ratio >= 7.0,
+            aaa_large_text=ratio >= 4.5,
+            ui_components=ratio >= 3.0
+        ))
+    return results
